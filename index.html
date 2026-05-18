@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лови яблука</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #87CEEB;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+        }
+        #gameContainer {
+            text-align: center;
+            position: relative;
+        }
+        canvas {
+            border: 3px solid #2c3e50;
+            border-radius: 10px;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 100%;
+        }
+        #info {
+            margin-bottom: 10px;
+            color: #2c3e50;
+        }
+        #score {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #lives {
+            font-size: 18px;
+            color: #e74c3c;
+        }
+        #gameOver {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255,255,255,0.95);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        #gameOver h2 {
+            color: #e74c3c;
+            margin-bottom: 10px;
+        }
+        #gameOver p {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 12px 30px;
+            font-size: 18px;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #2ecc71;
+        }
+        #controls {
+            margin-top: 10px;
+            color: #2c3e50;
+            font-size: 18px;
+        }
+    </style>
+<base target="_blank">
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="info">
+            <div id="score">Бали: 0</div>
+            <div id="lives">❤️ ❤️ ❤️</div>
+        </div>
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+        <div id="gameOver">
+            <h2>Гра закінчена!</h2>
+            <p id="finalScore">Бали: 0</p>
+            <button onclick="restartGame()">Грати знову</button>
+        </div>
+        <div id="controls">
+            Аліна Світлична, 7-А клас
+        </div>
+    </div>
+
+    <script>
+        // === НАСТРОЙКИ ИГРЫ (можно менять!) ===
+        const CONFIG = {
+            basketWidth: 70,      // Ширина корзинки
+            basketHeight: 20,     // Высота корзинки
+            basketSpeed: 8,       // Скорость корзинки
+            appleSize: 25,        // Размер яблока
+            bombSize: 30,         // Размер бомбы
+            appleSpeed: 5,        // Скорость падения яблок
+            bombSpeed: 4,         // Скорость падения бомб
+            spawnRate: 80,        // Кадров между появлением (меньше = чаще)
+            bombChance: 0.3,      // Шанс появления бомбы (0-1)
+            pointsPerApple: 10,   // Очки за яблоко
+            lives: 3              // Количество жизней
+        };
+        // ======================================
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Адаптация размера canvas под мобильные
+        function resizeCanvas() {
+            const maxWidth = Math.min(window.innerWidth - 20, 400);
+            const scale = maxWidth / 400;
+            canvas.style.width = maxWidth + 'px';
+            canvas.style.height = (600 * scale) + 'px';
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        let score = 0;
+        let lives = CONFIG.lives;
+        let gameRunning = true;
+        let frameCount = 0;
+        let objects = []; // Падающие предметы
+
+        // Корзинка
+        let basket = {
+            x: canvas.width / 2 - CONFIG.basketWidth / 2,
+            y: canvas.height - 50,
+            width: CONFIG.basketWidth,
+            height: CONFIG.basketHeight
+        };
+
+        // Управление мышью/тачем
+        let targetX = basket.x;
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            targetX = (e.clientX - rect.left) * scaleX - CONFIG.basketWidth / 2;
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            targetX = (e.touches[0].clientX - rect.left) * scaleX - CONFIG.basketWidth / 2;
+        }, { passive: false });
+
+        // Создание падающего объекта
+        function spawnObject() {
+            const isBomb = Math.random() < CONFIG.bombChance;
+            const x = Math.random() * (canvas.width - 40) + 20;
+            objects.push({
+                x: x,
+                y: -30,
+                type: isBomb ? 'bomb' : 'apple',
+                speed: isBomb ? CONFIG.bombSpeed : CONFIG.appleSpeed
+            });
+        }
+
+        // Проверка столкновений
+        function checkCollision(obj) {
+            const objSize = obj.type === 'apple' ? CONFIG.appleSize : CONFIG.bombSize;
+            return (
+                obj.x + objSize > basket.x &&
+                obj.x < basket.x + basket.width &&
+                obj.y + objSize > basket.y &&
+                obj.y < basket.y + basket.height
+            );
+        }
+
+        // Обновление игры
+        function update() {
+            if (!gameRunning) return;
+
+            frameCount++;
+
+            // Плавное движение корзинки
+            basket.x += (targetX - basket.x) * 0.2;
+            basket.x = Math.max(0, Math.min(canvas.width - basket.width, basket.x));
+
+            // Спавн объектов
+            if (frameCount % CONFIG.spawnRate === 0) {
+                spawnObject();
+            }
+
+            // Обновление объектов
+            for (let i = objects.length - 1; i >= 0; i--) {
+                let obj = objects[i];
+                obj.y += obj.speed;
+
+                // Проверка столкновения с корзинкой
+                if (checkCollision(obj)) {
+                    if (obj.type === 'apple') {
+                        score += CONFIG.pointsPerApple;
+                        document.getElementById('score').textContent = 'Бали: ' + score;
+                    } else {
+                        lives--;
+                        updateLives();
+                        if (lives <= 0) {
+                            endGame();
+                            return;
+                        }
+                    }
+                    objects.splice(i, 1);
+                    continue;
+                }
+
+                // Удаление объектов за экраном
+                if (obj.y > canvas.height) {
+                    if (obj.type === 'apple') {
+                        lives--; // Пропуск яблока = потеря жизни
+                        updateLives();
+                        if (lives <= 0) {
+                            endGame();
+                            return;
+                        }
+                    }
+                    objects.splice(i, 1);
+                }
+            }
+        }
+
+        // Обновление отображения жизней
+        function updateLives() {
+            let hearts = '';
+            for (let i = 0; i < lives; i++) hearts += '❤️ ';
+            document.getElementById('lives').textContent = hearts;
+        }
+
+        // Отрисовка
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Рисуем корзинку
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(basket.x, basket.y, basket.width, basket.height);
+            ctx.strokeStyle = '#5D3A1A';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(basket.x, basket.y, basket.width, basket.height);
+            // Ручка корзинки
+            ctx.beginPath();
+            ctx.arc(basket.x + basket.width/2, basket.y, 15, Math.PI, 0);
+            ctx.stroke();
+
+            // Рисуем объекты
+            objects.forEach(obj => {
+                if (obj.type === 'apple') {
+                    // Яблоко
+                    ctx.fillStyle = '#e74c3c';
+                    ctx.beginPath();
+                    ctx.arc(obj.x + CONFIG.appleSize/2, obj.y + CONFIG.appleSize/2, CONFIG.appleSize/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Хвостик
+                    ctx.fillStyle = '#27ae60';
+                    ctx.fillRect(obj.x + CONFIG.appleSize/2 - 2, obj.y, 4, 8);
+                } else {
+                    // Бомба
+                    ctx.fillStyle = '#2c3e50';
+                    ctx.beginPath();
+                    ctx.arc(obj.x + CONFIG.bombSize/2, obj.y + CONFIG.bombSize/2, CONFIG.bombSize/2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Фитиль
+                    ctx.strokeStyle = '#e67e22';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(obj.x + CONFIG.bombSize/2, obj.y);
+                    ctx.lineTo(obj.x + CONFIG.bombSize/2 + 5, obj.y - 8);
+                    ctx.stroke();
+                    // Искра
+                    ctx.fillStyle = '#f39c12';
+                    ctx.beginPath();
+                    ctx.arc(obj.x + CONFIG.bombSize/2 + 5, obj.y - 10, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            });
+        }
+
+        // Конец игры
+        function endGame() {
+            gameRunning = false;
+            document.getElementById('finalScore').textContent = 'Бали: ' + score;
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        // Перезапуск
+        function restartGame() {
+            score = 0;
+            lives = CONFIG.lives;
+            objects = [];
+            frameCount = 0;
+            gameRunning = true;
+            basket.x = canvas.width / 2 - CONFIG.basketWidth / 2;
+            targetX = basket.x;
+            document.getElementById('score').textContent = 'Бали: 0';
+            updateLives();
+            document.getElementById('gameOver').style.display = 'none';
+        }
+
+        // Игровой цикл
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Запуск
+        updateLives();
+        gameLoop();
+    </script>
+</body>
+</html>
